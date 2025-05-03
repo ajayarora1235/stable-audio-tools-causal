@@ -575,6 +575,61 @@ class DiTUncondWrapper(DiffusionModel):
     def forward(self, x, t, **kwargs):
         return self.model(x, t, **kwargs)
 
+class CausalDiffusionWrapper(ConditionedDiffusionModel):
+    def __init__(
+        self,
+        *args,
+        **kwargs
+    ):
+        super().__init__(supports_cross_attention=True, supports_global_cond=True, supports_input_concat=True)
+
+        from .causal_model import CausalTransformer
+
+        self.model = CausalTransformer(*args, **kwargs)
+
+        with torch.no_grad():
+            for param in self.model.parameters():
+                param *= 0.5
+
+    def forward(self,
+                x,
+                t,
+                cross_attn_cond=None,
+                cross_attn_mask=None,
+                input_concat_cond=None,
+                global_cond=None,
+                cfg_scale=1.0,
+                cfg_dropout_prob: float = 0.0,
+                batch_cfg: bool = False,
+                rescale_cfg: bool = False,
+                negative_cross_attn_cond=None,
+                negative_cross_attn_mask=None,
+                negative_global_cond=None,
+                negative_input_concat_cond=None,
+                prepend_cond=None,
+                prepend_cond_mask=None,
+                **kwargs):
+
+        # Get the current t value from the first timestep
+        step_t = t[0]
+
+        # Process input
+        x = self.model(x, mask=None)
+
+        # Apply cross attention if provided
+        if cross_attn_cond is not None:
+            x = x + self.model.attn(x, cross_attn_cond, mask=cross_attn_mask)
+
+        # Apply global conditioning if provided
+        if global_cond is not None:
+            x = x + self.model.ff(x, global_cond)
+
+        # Apply input concat conditioning if provided
+        if input_concat_cond is not None:
+            x = torch.cat([x, input_concat_cond], dim=1)
+
+        return x
+
 def create_diffusion_uncond_from_config(config: tp.Dict[str, tp.Any]):
     diffusion_uncond_config = config["model"]
 
@@ -648,6 +703,8 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
         diffusion_model = UNet1DCondWrapper(**diffusion_model_config)
     elif diffusion_model_type == 'dit':
         diffusion_model = DiTWrapper(diffusion_objective=diffusion_objective, **diffusion_model_config)
+    elif diffusion_model_type == 'causal':
+        diffusion_model = CausalDiffusionWrapper(**diffusion_model_config)
 
     io_channels = model_config.get('io_channels', None)
     assert io_channels is not None, "Must specify io_channels in model config"
