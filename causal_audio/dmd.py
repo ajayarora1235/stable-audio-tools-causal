@@ -35,9 +35,10 @@ class DMD(nn.Module):
         self.timestep_sampler = getattr(args, "timestep_sampler", "uniform")
         self.denoising_step_list = torch.tensor(
             args.denoising_step_list, dtype=torch.long, device=device)
-        self.num_train_timestep = args.num_train_timestep
-        self.min_step = int(0.02 * self.num_train_timestep)
-        self.max_step = int(0.98 * self.num_train_timestep)
+        assert max(self.denoising_step_list) <= 1.0, "should be 0 to 1"
+        # self.num_train_timestep = args.num_train_timestep
+        self.min_step = 0.02 #int(0.02 * self.num_train_timestep)
+        self.max_step = 0.98 #int(0.98 * self.num_train_timestep)
         self.real_guidance_scale = args.real_guidance_scale
         self.timestep_shift = getattr(args, "timestep_shift", 1.0)
 
@@ -152,9 +153,11 @@ class DMD(nn.Module):
 
             # Process timestep for causal audio
             t = self._process_timestep(t)
+            if self.timestep_shift > 1:
+                t = t * (self.timestep_shift / (1 + (self.timestep_shift - 1) * t))
 
             # Clamp timesteps to min/max range
-            t = t.clamp(self.min_step / self.num_train_timestep, self.max_step / self.num_train_timestep)
+            t = t.clamp(self.min_step, self.max_step)
 
             # Calculate noise schedule parameters
             alphas, sigmas = get_alphas_sigmas(t)
@@ -169,7 +172,7 @@ class DMD(nn.Module):
             grad, dmd_log_dict = self._compute_kl_grad(
                 noisy_audio=noisy_latent,
                 estimated_clean_audio=original_latent,
-                timestep=t * self.num_train_timestep,  # Scale back to discrete timesteps
+                timestep=t
                 conditional_dict=conditional_dict,
                 unconditional_dict=unconditional_dict
             )
@@ -205,7 +208,7 @@ class DMD(nn.Module):
                 audio_shape[:2], device=self.device, dtype=torch.long)
             if timestep != 0:
                 # Calculate noise schedule parameters for this timestep
-                t = timestep / self.num_train_timestep
+                t = timestep
                 alphas, sigmas = get_alphas_sigmas(torch.tensor([t], device=self.device).expand(audio_shape[0], audio_shape[1]))
                 
                 # Add channel dimension
@@ -310,15 +313,16 @@ class DMD(nn.Module):
             )
 
         # Step 2: Compute the fake prediction
-        critic_timestep = torch.randint(
-            0,
-            self.num_train_timestep,
-            audio_shape[:2],
-            device=self.device,
-            dtype=torch.long
-        )
+        if self.timestep_sampler == "uniform":
+            critic_timestep = torch.rand(audio_shape[:2], device=self.device)
+        else:
+          raise ValueError(f"Invalid timestep_sampler: {self.timestep_sampler}")
+
         critic_timestep = self._process_timestep(
             critic_timestep, type=self.fake_task_type)
+        
+        if self.timestep_shift > 1:
+            critic_timestep = critic_timestep * (self.timestep_shift / (1 + (self.timestep_shift - 1) * critic_timestep))
 
         critic_timestep = critic_timestep.clamp(self.min_step, self.max_step)
 
@@ -326,7 +330,7 @@ class DMD(nn.Module):
         critic_noise = torch.randn_like(generated_audio)
         
         # Get alpha_t and sigma_t from the noise schedule
-        t = critic_timestep / self.num_train_timestep
+        t = critic_timestep
         alpha_t, sigma_t = get_alphas_sigmas(t)
         alpha_t = alpha_t[:, :, None]  # Add channel dimension
         sigma_t = sigma_t[:, :, None]  # Add channel dimension
