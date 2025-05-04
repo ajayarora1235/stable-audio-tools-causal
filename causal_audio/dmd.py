@@ -3,14 +3,17 @@ from typing import Tuple
 from torch import nn
 import torch
 from stable_audio_tools.inference.sampling import get_alphas_sigmas, sample, sample_discrete_euler, truncated_logistic_normal_rescaled, DistributionShift
-
+from causal_audio.diffusion import CausalDiTWrapper, DiTWrapper
 
 class DMD(nn.Module):
     def __init__(self, args, device):
-        with open('/Users/cameronfranz/Documents/Projects/AudioTrain/causal_audio/configs/txt2audio/stable_audio_open_1_0.json') as f:
-            config = json.load(f)
 
-        self.generator = DiffusionTransformer(**config["model"]['diffusion'], timestep_embed_dim=24)
+        self.generator_model_name = getattr(
+            args, "generator_name", args.model_name)
+        self.real_model_name = getattr(args, "real_name", args.model_name)
+        self.fake_model_name = getattr(args, "fake_name", args.model_name)
+
+        self.generator = CausalDiTWrapper(**config["model"]['diffusion'], timestep_embed_dim=24)
         # self.generator = get_diffusion_wrapper(
             # model_name=self.generator_model_name)()
         
@@ -19,19 +22,14 @@ class DMD(nn.Module):
         if self.num_frame_per_block > 1:
             self.generator.model.num_frame_per_block = self.num_frame_per_block
 
-        self.real_score = get_diffusion_wrapper(
-            model_name=self.real_model_name)()
+        self.real_score, _ = get_pretrained_model(self.real_model_name)
         self.real_score.requires_grad_(False)
 
-        self.fake_score = get_diffusion_wrapper(
-            model_name=self.fake_model_name)()
+        self.fake_score = DiTWrapper(**config["model"]['diffusion'], timestep_embed_dim=24)
 
         self.text_encoder = get_text_encoder_wrapper(
             model_name=args.model_name)()
         self.text_encoder.requires_grad_(False)
-
-        self.vae = get_vae_wrapper(model_name=args.model_name)()
-        self.vae.requires_grad_(False)
 
         # Step 2: Initialize all dmd hyperparameters
         self.timestep_sampler = getattr(args, "timestep_sampler", "uniform")
@@ -46,7 +44,6 @@ class DMD(nn.Module):
         self.args = args
         self.device = device
         self.dtype = torch.bfloat16 if args.mixed_precision else torch.float32
-        self.scheduler = self.generator.get_scheduler()
         self.denoising_loss_func = MSELoss("output", "targets", weight=1.0, mask_key="padding_mask" if self.mask_padding else None, name="mse_loss")
 
     def _process_timestep(self, timestep):
@@ -85,9 +82,9 @@ class DMD(nn.Module):
         """
         # Step 1: Compute the fake score
         pred_fake_audio = self.fake_score(
-            noisy_audio=noisy_audio,
-            conditional_dict=conditional_dict,
-            timestep=timestep
+            x=noisy_audio,
+            t=timestep,
+            cond=conditional_dict
         )
 
         # Step 2: Compute the real score
@@ -95,8 +92,8 @@ class DMD(nn.Module):
         # and add them together to achieve cfg (https://arxiv.org/abs/2207.12598)
         pred_real_audio = self.real_score(
             x=noisy_audio,
-            cond=conditional_dict,
             t=timestep,
+            cond=conditional_dict,
             cfg_scale=self.real_guidance_scale
         )
 
@@ -239,9 +236,9 @@ class DMD(nn.Module):
         timestep = self.denoising_step_list[index]
 
         pred_audio = self.generator(
-            noisy_audio=noisy_input,
-            conditional_dict=conditional_dict,
-            timestep=timestep
+            x=noisy_input,
+            t=timestep,
+            cond=conditional_dict
         )
 
         gradient_mask = None  # timestep != 0

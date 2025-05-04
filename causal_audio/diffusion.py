@@ -7,7 +7,7 @@ import typing as tp
 
 from .blocks import ResConvBlock, FourierFeatures, Upsample1d, Upsample1d_2, Downsample1d, Downsample1d_2, SelfAttention1d, SkipBlock, expand_to_planes
 from .conditioners import MultiConditioner, create_multi_conditioner_from_conditioning_config
-from .dit import DiffusionTransformer
+from .dit import DiffusionTransformer, CausalDiffusionTransformer
 from .factory import create_pretransform_from_config
 from .pretransforms import Pretransform
 from ..inference.generation import generate_diffusion_cond
@@ -227,6 +227,59 @@ class DiTWrapper(ConditionedDiffusionModel):
         super().__init__(supports_cross_attention=True, supports_global_cond=False, supports_input_concat=False)
 
         self.model = DiffusionTransformer(*args, **kwargs)
+
+        with torch.no_grad():
+            for param in self.model.parameters():
+                param *= 0.5
+
+    def forward(self,
+                x,
+                t,
+                cross_attn_cond=None,
+                cross_attn_mask=None,
+                negative_cross_attn_cond=None,
+                negative_cross_attn_mask=None,
+                input_concat_cond=None,
+                negative_input_concat_cond=None,
+                global_cond=None,
+                negative_global_cond=None,
+                prepend_cond=None,
+                prepend_cond_mask=None,
+                cfg_scale=1.0,
+                cfg_dropout_prob: float = 0.0,
+                batch_cfg: bool = True,
+                rescale_cfg: bool = False,
+                scale_phi: float = 0.0,
+                **kwargs):
+
+        assert batch_cfg, "batch_cfg must be True for DiTWrapper"
+        #assert negative_input_concat_cond is None, "negative_input_concat_cond is not supported for DiTWrapper"
+
+        return self.model(
+            x,
+            t,
+            cross_attn_cond=cross_attn_cond,
+            cross_attn_cond_mask=cross_attn_mask,
+            negative_cross_attn_cond=negative_cross_attn_cond,
+            negative_cross_attn_mask=negative_cross_attn_mask,
+            input_concat_cond=input_concat_cond,
+            prepend_cond=prepend_cond,
+            prepend_cond_mask=prepend_cond_mask,
+            cfg_scale=cfg_scale,
+            cfg_dropout_prob=cfg_dropout_prob,
+            scale_phi=scale_phi,
+            global_embed=global_cond,
+            **kwargs)
+
+class CausalDiTWrapper(ConditionedDiffusionModel):
+    def __init__(
+        self,
+        *args,
+        **kwargs
+    ):
+        super().__init__(supports_cross_attention=True, supports_global_cond=False, supports_input_concat=False)
+
+        self.model = CausalDiffusionTransformer(*args, **kwargs)
 
         with torch.no_grad():
             for param in self.model.parameters():

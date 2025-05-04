@@ -1,4 +1,4 @@
-from diffusion import DiTWrapper, ConditionedDiffusionModelWrapper
+from diffusion import DiTWrapper, CausalDitWrapper
 import torch.nn.functional as F
 from typing import Tuple
 from torch import nn
@@ -18,10 +18,8 @@ class ODERegression(nn.Module):
 
         # Step 1: Initialize all models
 
-        self.generator = ConditionedDiffusionModelWrapper()
-        self.generator.set_module_grad(
-            module_grad=args.generator_grad
-        )
+        self.generator = CausalDiTWrapper(**config["model"]['diffusion'], timestep_embed_dim=24)
+
         if getattr(args, "generator_ckpt", False):
             print(f"Loading pretrained generator from {args.generator_ckpt}")
             state_dict = torch.load(args.generator_ckpt, map_location="cpu")[
@@ -41,9 +39,6 @@ class ODERegression(nn.Module):
         self.text_encoder = get_text_encoder_wrapper(
             model_name=args.model_name)()
         self.text_encoder.requires_grad_(False)
-
-        self.vae = get_vae_wrapper(model_name=args.model_name)()
-        self.vae.requires_grad_(False)
 
         # Step 2: Initialize all hyperparameters
 
@@ -121,9 +116,7 @@ class ODERegression(nn.Module):
         noisy_input, timestep = self._prepare_generator_input(
             ode_latent=ode_latent)
 
-        conditioning = self.generator.conditioner(metadata, self.device)
-
-        output = self.generator(noisy_input, timestep, cond=conditional_dict)
+        output = self.generator(x=noisy_input, t=timestep, cond=conditional_dict)
 
         # Step 2: Compute the regression loss
         mask = timestep != 0
