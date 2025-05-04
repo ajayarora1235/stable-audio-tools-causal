@@ -10,7 +10,13 @@ from torch.amp import autocast
 from torch.nn.utils.parametrizations import weight_norm
 from typing import Callable, Literal
 
+from torch.nn.attention.flex_attention import create_block_mask, flex_attention, BlockMask
+import math
+
 from .utils import compile
+
+flex_attention = torch.compile(
+    flex_attention, dynamic=False, mode="max-autotune")
 
 try:
     from flash_attn import flash_attn_func, flash_attn_kvpacked_func
@@ -294,6 +300,8 @@ class Attention(nn.Module):
         dim_heads = 64,
         dim_context = None,
         causal = False,
+        use_block_mask = False,
+        block_mask_block_size = 50,
         zero_init_output=True,
         qk_norm: Literal['l2', 'ln', 'none'] = 'none',
         natten_kernel_size = None,
@@ -354,6 +362,9 @@ class Attention(nn.Module):
         if self.feat_scale:
             self.lambda_dc = nn.Parameter(torch.zeros(dim))
             self.lambda_hf = nn.Parameter(torch.zeros(dim))
+        
+        self.block_mask_cache = {}
+        
 
     def flash_attn(
             self,
@@ -426,6 +437,50 @@ class Attention(nn.Module):
             out = out.masked_fill(row_is_entirely_masked[..., None], 0.)
 
         return out
+
+    @staticmethod
+    def _prepare_blockwise_causal_attn_mask(
+        num_frames: int,
+        num_frame_per_block: int = 1,
+    ) -> BlockMask:
+        """
+        we will divide the token sequence into the following format
+        [1 latent frame] [1 latent frame] ... [1 latent frame]
+        We use flexattention to construct the attention mask
+        """
+        total_length = num_frames 
+
+        # we do right padding to get to a multiple of 128
+        # padding no longer needed for flex-attention
+        padded_length = 0
+
+        ends = torch.zeros(total_length + padded_length, dtype=torch.long)
+
+        # Block-wise causal mask will attend to all elements that are before the end of the current chunk
+        frame_indices = torch.arange(
+            start=0,
+            end=total_length,
+            step=num_frame_per_block,
+        )
+
+        for tmp in frame_indices:
+            ends[tmp:tmp + num_frame_per_block] = tmp + \
+                num_frame_per_block
+
+        def attention_mask(b, h, q_idx, kv_idx):
+            return (kv_idx < ends[q_idx]) | (q_idx == kv_idx)
+            # return ((kv_idx < total_length) & (q_idx < total_length))  | (q_idx == kv_idx) # bidirectional mask
+
+        block_mask = create_block_mask(attention_mask, B=None, H=None, Q_LEN=total_length + padded_length,
+                                       KV_LEN=total_length + padded_length, _compile=False)
+
+        import torch.distributed as dist
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            print(
+                f" cache a block wise causal mask with block size of {num_frame_per_block} frames")
+            print(block_mask)
+
+        return block_mask
 
     @compile
     def apply_qk_layernorm(self, q, k):
@@ -507,71 +562,82 @@ class Attention(nn.Module):
 
         if n == 1 and causal:
             causal = False
+        
+        assert final_attn_mask is None, 'masking not yet supported for flex-attention'
 
-        if self.natten_kernel_size is not None:
-            if natten is None:
-                raise ImportError('natten not installed, please install natten to use neighborhood attention')
-            
-            dtype_in = q.dtype
-            q, k, v = map(lambda t: t.to(torch.float32), (q, k, v))
-
-            attn = natten.functional.na1d_qk(q, k, kernel_size = self.natten_kernel_size, dilation=1)
-
-            if final_attn_mask is not None:
-                attn = attn.masked_fill(final_attn_mask, -torch.finfo(attn.dtype).max)
-
-            attn = F.softmax(attn, dim=-1, dtype=torch.float32)
-
-            out = natten.functional.na1d_av(attn, v, kernel_size = self.natten_kernel_size, dilation=1).to(dtype_in)
-
-        # Prioritize Flash Attention 2
-        elif self.use_fa_flash:
-            assert final_attn_mask is None, 'masking not yet supported for Flash Attention 2'
-            # Flash Attention 2 requires FP16 inputs
-            fa_dtype_in = q.dtype
-
-            q, k, v = map(lambda t: rearrange(t, 'b h n d -> b n h d'), (q, k, v))
-
-            if fa_dtype_in != torch.float16 and fa_dtype_in != torch.bfloat16:
-                q, k, v = map(lambda t: t.to(torch.float16), (q, k, v))
-            
-            out = flash_attn_func(q, k, v, causal = causal, window_size=self.sliding_window)
-            
-            out = rearrange(out.to(fa_dtype_in), 'b n h d -> b h n d')
-
-        # Fall back to PyTorch implementation
-        elif self.use_pt_flash:
-            out = self.flash_attn(q, k, v, causal = causal, mask = final_attn_mask)
-
+        if self.use_block_mask:
+            if n not in self.block_mask_cache:
+                if len(self.block_mask_cache.keys()) > 0:
+                    print(f'Warning, remaking a block mask of size {n}')
+                self.block_mask_cache[n] = self._prepare_blockwise_causal_attn_mask(n, self.block_mask_block_size)
+            out = flex_attention(q, k, v, block_mask = self.block_mask_cache[n])
         else:
-            # Fall back to custom implementation
+            out = flex_attention(q, k, v)
 
-            if h != kv_h:
-                # Repeat interleave kv_heads to match q_heads
-                heads_per_kv_head = h // kv_h
-                k, v = map(lambda t: t.repeat_interleave(heads_per_kv_head, dim = 1), (k, v))
-
-            scale = 1. / (q.shape[-1] ** 0.5)
-
-            kv_einsum_eq = 'b j d' if k.ndim == 3 else 'b h j d'
-
-            dots = einsum(f'b h i d, {kv_einsum_eq} -> b h i j', q, k) * scale
+        # if self.natten_kernel_size is not None:
+        #     if natten is None:
+        #         raise ImportError('natten not installed, please install natten to use neighborhood attention')
             
-            i, j, dtype = *dots.shape[-2:], dots.dtype
+        #     dtype_in = q.dtype
+        #     q, k, v = map(lambda t: t.to(torch.float32), (q, k, v))
 
-            mask_value = -torch.finfo(dots.dtype).max
+        #     attn = natten.functional.na1d_qk(q, k, kernel_size = self.natten_kernel_size, dilation=1)
 
-            if final_attn_mask is not None:
-                dots = dots.masked_fill(~final_attn_mask, mask_value)
+        #     if final_attn_mask is not None:
+        #         attn = attn.masked_fill(final_attn_mask, -torch.finfo(attn.dtype).max)
 
-            if causal:
-                causal_mask = self.create_causal_mask(i, j, device = device)
-                dots = dots.masked_fill(causal_mask, mask_value)
+        #     attn = F.softmax(attn, dim=-1, dtype=torch.float32)
 
-            attn = F.softmax(dots, dim=-1, dtype=torch.float32)
-            attn = attn.type(dtype)
+        #     out = natten.functional.na1d_av(attn, v, kernel_size = self.natten_kernel_size, dilation=1).to(dtype_in)
 
-            out = einsum(f'b h i j, {kv_einsum_eq} -> b h i d', attn, v)
+        # # Prioritize Flash Attention 2
+        # elif self.use_fa_flash:
+        #     assert final_attn_mask is None, 'masking not yet supported for Flash Attention 2'
+        #     # Flash Attention 2 requires FP16 inputs
+        #     fa_dtype_in = q.dtype
+
+        #     q, k, v = map(lambda t: rearrange(t, 'b h n d -> b n h d'), (q, k, v))
+
+        #     if fa_dtype_in != torch.float16 and fa_dtype_in != torch.bfloat16:
+        #         q, k, v = map(lambda t: t.to(torch.float16), (q, k, v))
+            
+        #     out = flash_attn_func(q, k, v, causal = causal, window_size=self.sliding_window)
+            
+        #     out = rearrange(out.to(fa_dtype_in), 'b n h d -> b h n d')
+
+        # # Fall back to PyTorch implementation
+        # elif self.use_pt_flash:
+        #     out = self.flash_attn(q, k, v, causal = causal, mask = final_attn_mask)
+
+        # else:
+        #     # Fall back to custom implementation
+
+        #     if h != kv_h:
+        #         # Repeat interleave kv_heads to match q_heads
+        #         heads_per_kv_head = h // kv_h
+        #         k, v = map(lambda t: t.repeat_interleave(heads_per_kv_head, dim = 1), (k, v))
+
+        #     scale = 1. / (q.shape[-1] ** 0.5)
+
+        #     kv_einsum_eq = 'b j d' if k.ndim == 3 else 'b h j d'
+
+        #     dots = einsum(f'b h i d, {kv_einsum_eq} -> b h i j', q, k) * scale
+            
+        #     i, j, dtype = *dots.shape[-2:], dots.dtype
+
+        #     mask_value = -torch.finfo(dots.dtype).max
+
+        #     if final_attn_mask is not None:
+        #         dots = dots.masked_fill(~final_attn_mask, mask_value)
+
+        #     if causal:
+        #         causal_mask = self.create_causal_mask(i, j, device = device)
+        #         dots = dots.masked_fill(causal_mask, mask_value)
+
+        #     attn = F.softmax(dots, dim=-1, dtype=torch.float32)
+        #     attn = attn.type(dtype)
+
+        #     out = einsum(f'b h i j, {kv_einsum_eq} -> b h i d', attn, v)
 
         # merge heads
         out = rearrange(out, ' b h n d -> b n (h d)')
