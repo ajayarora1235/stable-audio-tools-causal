@@ -24,7 +24,7 @@ class DiffusionTransformer(nn.Module):
         num_heads=8,
         transformer_type: tp.Literal["x-transformers", "continuous_transformer"] = "x-transformers",
         global_cond_type: tp.Literal["prepend", "adaLN"] = "prepend",
-        timestep_cond_type: tp.Literal["global", "input_concat"] = "global",
+        timestep_cond_type: tp.Literal["global", "input_concat"] = "input_concat",
         timestep_embed_dim=None,
         diffusion_objective: tp.Literal["v", "rectified_flow"] = "v",
         **kwargs):
@@ -198,7 +198,7 @@ class DiffusionTransformer(nn.Module):
             else:
                 global_embed = timestep_embed
         elif self.timestep_cond_type == "input_concat":
-            x = torch.cat([x, timestep_embed.unsqueeze(1).expand(-1, -1, x.shape[2])], dim=1)
+            x = torch.cat([x, timestep_embed.expand(-1, -1, x.shape[2])], dim=1)
 
         # Add the global_embed to the prepend inputs if there is no global conditioning support in the transformer
         if self.global_cond_type == "prepend" and global_embed is not None:
