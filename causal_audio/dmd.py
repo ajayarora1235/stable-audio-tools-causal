@@ -7,8 +7,12 @@ from stable_audio_tools.inference.sampling import get_alphas_sigmas, sample, sam
 
 class DMD(nn.Module):
     def __init__(self, args, device):
-        self.generator = get_diffusion_wrapper(
-            model_name=self.generator_model_name)()
+        with open('/Users/cameronfranz/Documents/Projects/AudioTrain/causal_audio/configs/txt2audio/stable_audio_open_1_0.json') as f:
+            config = json.load(f)
+
+        self.generator = DiffusionTransformer(**config["model"]['diffusion'], timestep_embed_dim=24)
+        # self.generator = get_diffusion_wrapper(
+            # model_name=self.generator_model_name)()
         
         self.num_frame_per_block = getattr(args, "num_frame_per_block", 1)
 
