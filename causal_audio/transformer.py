@@ -313,6 +313,9 @@ class Attention(nn.Module):
         self.dim_heads = dim_heads
         self.causal = causal
 
+        self.use_block_mask = use_block_mask
+        self.block_mask_block_size = block_mask_block_size
+
         dim_kv = dim_context if dim_context is not None else dim
         
         self.num_heads = dim // dim_heads
@@ -709,6 +712,8 @@ class TransformerBlock(nn.Module):
             dim_context = None,
             global_cond_dim = None,
             causal = False,
+            use_block_mask=False,
+            block_mask_block_size = 50,
             zero_init_branch_outputs = True,
             conformer = False,
             layer_ix = -1,
@@ -739,6 +744,8 @@ class TransformerBlock(nn.Module):
             dim,
             dim_heads = dim_heads,
             causal = causal,
+            use_block_mask = use_block_mask,
+            block_mask_block_size = block_mask_block_size,
             zero_init_output=zero_init_branch_outputs,
             **attn_kwargs
         )
@@ -843,6 +850,8 @@ class ContinuousTransformer(nn.Module):
         final_cross_attn_ix=-1,
         global_cond_dim=None,
         causal=False,
+        use_block_mask=False,
+        block_mask_block_size=50,
         rotary_pos_emb=True,
         zero_init_branch_outputs=True,
         conformer=False,
@@ -895,6 +904,8 @@ class ContinuousTransformer(nn.Module):
                     dim_context = cond_token_dim,
                     global_cond_dim = global_cond_dim,
                     causal = causal,
+                    use_block_mask = use_block_mask,
+                    block_mask_block_size = block_mask_block_size,
                     zero_init_branch_outputs = zero_init_branch_outputs,
                     conformer=conformer,
                     layer_ix=i,

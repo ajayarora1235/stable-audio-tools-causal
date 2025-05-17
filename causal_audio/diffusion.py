@@ -279,7 +279,7 @@ class CausalDiTWrapper(ConditionedDiffusionModel):
     ):
         super().__init__(supports_cross_attention=True, supports_global_cond=False, supports_input_concat=False)
 
-        self.model = CausalDiffusionTransformer(*args, **kwargs)
+        self.model = DiffusionTransformer(*args, **kwargs)
 
         with torch.no_grad():
             for param in self.model.parameters():
