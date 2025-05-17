@@ -1,15 +1,15 @@
 from safetensors.torch import save_file
 import torch.distributed as dist
 from omegaconf import OmegaConf
-from causvid.dmd import DMD
+from causal_audio.dmd import DMD
 import argparse
 import torch
 import wandb
 import time
 import os
 import json
-from causvid.data import ODERegressionLMDBDataset
-from causvid.util import barrier, cycle
+from causal_video.data import ODERegressionLMDBDataset
+from causal_video.util import barrier, cycle
 import torch.nn.functional as F
 from stable_audio_tools.inference.sampling import get_alphas_sigmas, sample, sample_discrete_euler, truncated_logistic_normal_rescaled, DistributionShift
 from accelerate import DistributedDataParallelKwargs, Accelerator

@@ -6,8 +6,8 @@ from einops import rearrange
 from torch import nn
 from torch.nn import functional as F
 
-from .blocks import FourierFeatures
-from .transformer import ContinuousTransformer
+from stable_audio_tools.models.blocks import FourierFeatures
+from causal_audio.transformer import ContinuousTransformer
 
 class DiffusionTransformer(nn.Module):
     def __init__(self, 
@@ -27,6 +27,8 @@ class DiffusionTransformer(nn.Module):
         timestep_cond_type: tp.Literal["global", "input_concat"] = "input_concat",
         timestep_embed_dim=None,
         diffusion_objective: tp.Literal["v", "rectified_flow"] = "v",
+        use_block_mask=False,
+        block_mask_block_size=50,
         **kwargs):
 
         super().__init__()
@@ -133,6 +135,8 @@ class DiffusionTransformer(nn.Module):
                 cross_attend = cond_token_dim > 0,
                 cond_token_dim = cond_embed_dim,
                 global_cond_dim=global_dim,
+                use_block_mask=use_block_mask,
+                block_mask_block_size=block_mask_block_size,
                 **kwargs
             )
              

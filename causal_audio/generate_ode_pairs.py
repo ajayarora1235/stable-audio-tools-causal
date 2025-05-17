@@ -45,7 +45,7 @@ def get_caption(mDf, idx):
 
   
 def generate(device, count, folder):
-  metadata_all = pd.read_parquet('/Users/cameronfranz/Downloads/freesound_parquet.parquet')
+  metadata_all = pd.read_parquet('~/Documents/SILKROAD/stable-audio-tools-causal/causal_audio/freesound_parquet.parquet')
   assert len(metadata_all) == 554850
   metadata_all.head()
 
@@ -73,13 +73,16 @@ def generate(device, count, folder):
 
     captions = []
     audio = data_all.iloc[start:end]['audio']
+    latents_all = []
     input_tensor_shape = torch.tensor(())
     for j in range(len(batch_data)):
       caption = get_caption(data_all, i)
       audio = torch.tensor(audio[0]).float()
       audio = audio.transpose(0,1).unsqueeze(0)
       with torch.no_grad():
-      latents = model.pretransform.encode(audio)
+        latents = model.pretransform.encode(audio)
+        latents_all.append(latents)
+      
   
   # 1024 * 64 * 550_000 * 0.5 / (1e9) # 18gb estimated
     

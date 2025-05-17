@@ -1,0 +1,47 @@
+[project]
+authors = ["Ajay Arora <ajayarora1235@gmail.com>"]
+channels = ["conda-forge"]
+description = "Add a short description here"
+name = "stable-audio-tools-causal"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+python = "==3.11.12"
+
+[pypi-dependencies]
+alias-free-torch = "==0.0.6"
+auraloss = "==0.4.0"
+descript-audio-codec = "==1.0.0"
+einops = ">=0.8.1, <0.9"
+einops-exts = ">=0.0.4, <0.0.5"
+ema-pytorch = "==0.2.3"
+encodec = "==0.1.1"
+gradio = ">=5.20.0"
+huggingface-hub = ">=0.31.2, <0.32"
+importlib-resources = "==5.12.0"
+k-diffusion = "==0.1.1"
+laion-clap = "==1.1.4"
+local-attention = "==1.8.6"
+pandas = "==2.0.2"
+prefigure = "==0.0.9"
+pytorch-lightning = "==2.1.0"
+pywavelets = "==1.4.1"
+safetensors = ">=0.5.3, <0.6"
+sentencepiece = "==0.1.99"
+torch = ">=2.5.1"
+torchaudio = ">=2.5.1"
+torchmetrics = "==0.11.4"
+tqdm = ">=4.67.1, <5"
+transformers = ">=4.51.3, <5"
+v-diffusion-pytorch = "==0.0.2"
+vector-quantize-pytorch = "==1.14.41"
+wandb = "==0.15.4"
+webdataset = "==0.2.100"
+stable-audio-tools = ">=0.0.19, <0.0.20"
+ipykernel = ">=6.29.5, <7"
+pip = ">=25.1.1, <26"
+pyarrow = ">=20.0.0, <21"
+fastparquet = ">=2024.11.0, <2025"
