@@ -12,7 +12,11 @@ from causvid.data import ODERegressionLMDBDataset
 from causvid.util import barrier, cycle
 import torch.nn.functional as F
 from stable_audio_tools.inference.sampling import get_alphas_sigmas, sample, sample_discrete_euler, truncated_logistic_normal_rescaled, DistributionShift
+from accelerate import DistributedDataParallelKwargs, Accelerator
 
+ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+accelerator = Accelerator(log_with="wandb", kwargs_handlers=[ddp_kwargs])
+device = accelerator.device
 
 class DiffusionDistillationTrainer:
     def __init__(self, config):

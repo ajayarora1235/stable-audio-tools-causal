@@ -591,7 +591,7 @@ class CausalWanModel(ModelMixin, ConfigMixin):
             x (List[Tensor]):
                 List of input video tensors, each with shape [C_in, F, H, W]
             t (Tensor):
-                Diffusion timesteps tensor of shape [B]
+                Diffusion timesteps tensor of shape [B, F]
             context (List[Tensor]):
                 List of text embeddings each with shape [L, C]
             seq_len (`int`):
